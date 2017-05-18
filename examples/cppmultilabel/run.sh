@@ -1,0 +1,3 @@
+export LD_LIBRARY_PATH=../../cuda/lib64:$LD_LIBRARY_PATH
+
+./build/tools/caffe train -solver ZFnet_solver.prototxt # -weights ......
