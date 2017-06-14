@@ -21,17 +21,21 @@ void SoftmaxWithLossLayer<Dtype>::LayerSetUp(
   softmax_layer_->SetUp(softmax_bottom_vec_, softmax_top_vec_);
 
   has_ignore_label_ =
-    this->layer_param_.loss_param().has_ignore_label();
+    this->layer_param_.ignore_loss_param().ignore_mark();
   if (has_ignore_label_) {
-    ignore_label_ = this->layer_param_.loss_param().ignore_label();
+	  for(int ignore_idx = 0; ignore_idx < this->layer_param_.ignore_loss_param().ignore_label_size(); ++ignore_idx)
+	  {
+		  ignore_label_.push_back(this->layer_param_.ignore_loss_param().ignore_label(ignore_idx));
+	  }
+    //ignore_label_ = this->layer_param_.ignore_loss_param().ignore_label();
   }
-  if (!this->layer_param_.loss_param().has_normalization() &&
-      this->layer_param_.loss_param().has_normalize()) {
-    normalization_ = this->layer_param_.loss_param().normalize() ?
-                     LossParameter_NormalizationMode_VALID :
-                     LossParameter_NormalizationMode_BATCH_SIZE;
+  if (!this->layer_param_.ignore_loss_param().has_normalization() &&
+      this->layer_param_.ignore_loss_param().has_normalize()) {
+    normalization_ = this->layer_param_.ignore_loss_param().normalize() ?
+                     IgnoreLossParameter_NormalizationMode_VALID :
+                     IgnoreLossParameter_NormalizationMode_BATCH_SIZE;
   } else {
-    normalization_ = this->layer_param_.loss_param().normalization();
+    normalization_ = this->layer_param_.ignore_loss_param().normalization();
   }
 }
 
@@ -57,28 +61,28 @@ void SoftmaxWithLossLayer<Dtype>::Reshape(
 
 template <typename Dtype>
 Dtype SoftmaxWithLossLayer<Dtype>::get_normalizer(
-    LossParameter_NormalizationMode normalization_mode, int valid_count) {
+    IgnoreLossParameter_NormalizationMode normalization_mode, int valid_count) {
   Dtype normalizer;
   switch (normalization_mode) {
-    case LossParameter_NormalizationMode_FULL:
+    case IgnoreLossParameter_NormalizationMode_FULL:
       normalizer = Dtype(outer_num_ * inner_num_);
       break;
-    case LossParameter_NormalizationMode_VALID:
+    case IgnoreLossParameter_NormalizationMode_VALID:
       if (valid_count == -1) {
         normalizer = Dtype(outer_num_ * inner_num_);
       } else {
         normalizer = Dtype(valid_count);
       }
       break;
-    case LossParameter_NormalizationMode_BATCH_SIZE:
+    case IgnoreLossParameter_NormalizationMode_BATCH_SIZE:
       normalizer = Dtype(outer_num_);
       break;
-    case LossParameter_NormalizationMode_NONE:
+    case IgnoreLossParameter_NormalizationMode_NONE:
       normalizer = Dtype(1);
       break;
     default:
       LOG(FATAL) << "Unknown normalization mode: "
-          << LossParameter_NormalizationMode_Name(normalization_mode);
+          << IgnoreLossParameter_NormalizationMode_Name(normalization_mode);
   }
   // Some users will have no labels for some examples in order to 'turn off' a
   // particular loss in a multi-task setup. The max prevents NaNs in that case.
@@ -95,11 +99,21 @@ void SoftmaxWithLossLayer<Dtype>::Forward_cpu(
   int dim = prob_.count() / outer_num_;
   int count = 0;
   Dtype loss = 0;
+  bool key = false;
   for (int i = 0; i < outer_num_; ++i) {
     for (int j = 0; j < inner_num_; j++) {
+	  key = false;
       const int label_value = static_cast<int>(label[i * inner_num_ + j]);
-      if (has_ignore_label_ && label_value == ignore_label_) {
-        continue;
+      if (has_ignore_label_ ) {
+		  for(size_t i = 0; i<ignore_label_.size(); ++i)
+		  {
+			  if(label_value == ignore_label_[i])
+			  {
+				  key = true;
+			      break;
+			  }
+		  }
+		  if(key)continue;
       }
       DCHECK_GE(label_value, 0);
       DCHECK_LT(label_value, prob_.shape(softmax_axis_));
@@ -128,17 +142,29 @@ void SoftmaxWithLossLayer<Dtype>::Backward_cpu(const vector<Blob<Dtype>*>& top,
     const Dtype* label = bottom[1]->cpu_data();
     int dim = prob_.count() / outer_num_;
     int count = 0;
+	bool key = false;
     for (int i = 0; i < outer_num_; ++i) {
       for (int j = 0; j < inner_num_; ++j) {
+		key = false;
         const int label_value = static_cast<int>(label[i * inner_num_ + j]);
-        if (has_ignore_label_ && label_value == ignore_label_) {
-          for (int c = 0; c < bottom[0]->shape(softmax_axis_); ++c) {
-            bottom_diff[i * dim + c * inner_num_ + j] = 0;
-          }
-        } else {
-          bottom_diff[i * dim + label_value * inner_num_ + j] -= 1;
-          ++count;
-        }
+        if (has_ignore_label_)
+		{
+			for(size_t i = 0; i<ignore_label_.size(); ++i){
+				if(label_value == ignore_label_[i]){
+					key = true; break;
+				}
+			}
+
+		}
+		if(key)
+		{
+			for (int c = 0; c < bottom[0]->shape(softmax_axis_); ++c) {
+					bottom_diff[i * dim + c * inner_num_ + j] = 0;
+				}
+		}else{
+			bottom_diff[i * dim + label_value * inner_num_ + j] -= 1;
+			++count;
+		}
       }
     }
     // Scale gradient
