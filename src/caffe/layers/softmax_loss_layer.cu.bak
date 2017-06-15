@@ -12,20 +12,24 @@ __global__ void SoftmaxLossForwardGPU(const int nthreads,
           const Dtype* prob_data, const Dtype* label, Dtype* loss,
           const int num, const int dim, const int spatial_dim,
           const bool has_ignore_label_, const int* ignore_label,
-          Dtype* counts, int *ignore_label_size) {
+          Dtype* counts, int ignore_label_size) {
   CUDA_KERNEL_LOOP(index, nthreads) {
     const int n = index / spatial_dim;
     const int s = index % spatial_dim;
     const int label_value = static_cast<int>(label[n * spatial_dim + s]);
-	int keywords = 0;
-	if(has_ignore_label_){
-		for(int ix = 0; ix < *ignore_label_size; ix++)
+	bool key = false;
+	bool iszero ;
+    if (has_ignore_label_) {
+		for(size_t i = 0; i<ignore_label_size;++i)
 		{
-			if(label_value == ignore_label[ix])
-				keywords = 1;
+			iszero = (label_value - ignore_label[i]);
+			if(!iszero)
+			{
+				key = true; break;
+			}
 		}
 	}
-    if (keywords == 1) {
+	if(key){
       loss[index] = 0;
       counts[index] = 0;
     } else {
@@ -51,25 +55,14 @@ void SoftmaxWithLossLayer<Dtype>::Forward_gpu(
   // Similarly, this memory is never used elsewhere, and thus we can use it
   // to avoid having to allocate additional GPU memory.
   Dtype* counts = prob_.mutable_gpu_diff();
-
-  int size = ignore_label_.size();
-  int *tmp_size = &size;
-  int *ignore_label_size;
-  int *ignore_label;
-  cudaMalloc((void **)&ignore_label_size, sizeof(int));
-  cudaMalloc((void **)&ignore_label, size*sizeof(int));
-  int *tmp;
-  tmp = (int *) malloc(size*sizeof(int));
-  for(int ix = 0; ix< size; ix++)
-	  tmp[ix] = ignore_label_[ix];
-  cudaMemcpy(ignore_label, tmp, size*sizeof(int), cudaMemcpyHostToDevice);
-  cudaMemcpy(ignore_label_size, tmp_size, sizeof(int), cudaMemcpyHostToDevice);
+  int ignore_label_size = ignore_label_.size();
+  int ignore_label[ignore_label_size];
+  for(size_t i = 0; i<ignore_label_size; ++i)
+	ignore_label[i] = ignore_label_[i];
   // NOLINT_NEXT_LINE(whitespace/operators)
   SoftmaxLossForwardGPU<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
       CAFFE_CUDA_NUM_THREADS>>>(nthreads, prob_data, label, loss_data,
       outer_num_, dim, inner_num_, has_ignore_label_, ignore_label, counts, ignore_label_size);
-  free(tmp);
-  cudaFree(ignore_label_size);cudaFree(ignore_label);
   Dtype loss;
   caffe_gpu_asum(nthreads, loss_data, &loss);
   Dtype valid_count = -1;
@@ -90,22 +83,24 @@ template <typename Dtype>
 __global__ void SoftmaxLossBackwardGPU(const int nthreads, const Dtype* top,
           const Dtype* label, Dtype* bottom_diff, const int num, const int dim,
           const int spatial_dim, const bool has_ignore_label_,
-          const int* ignore_label, Dtype* counts, int *ignore_label_size) {
+          const int* ignore_label, Dtype* counts, int ignore_label_size) {
   const int channels = dim / spatial_dim;
 
   CUDA_KERNEL_LOOP(index, nthreads) {
     const int n = index / spatial_dim;
     const int s = index % spatial_dim;
     const int label_value = static_cast<int>(label[n * spatial_dim + s]);
-	int keywords = 0;
-	if(has_ignore_label_){
-		for(int ix = 0; ix < *ignore_label_size; ix++)
-		{
-			if(label_value == ignore_label[ix])
-				keywords = 1;
+	bool key = false;
+	bool iszero;
+    if (has_ignore_label_ ) {
+		for(size_t i = 0; i<ignore_label_size; ++i){
+			iszero = (label_value - ignore_label[i]);
+			if(!iszero){
+				key = true; break;
+			}
 		}
 	}
-    if (keywords == 1) {
+	if(key){
       for (int c = 0; c < channels; ++c) {
         bottom_diff[n * dim + c * spatial_dim + s] = 0;
       }
@@ -135,24 +130,15 @@ void SoftmaxWithLossLayer<Dtype>::Backward_gpu(const vector<Blob<Dtype>*>& top,
     // Since this memory is never used for anything else,
     // we use to to avoid allocating new GPU memory.
     Dtype* counts = prob_.mutable_gpu_diff();
+	int ignore_label_size = ignore_label_.size();
+	int ignore_label[ignore_label_size];
+	for(size_t i = 0; i<ignore_label_size; i++)
+		ignore_label[i] = ignore_label_[i];
     // NOLINT_NEXT_LINE(whitespace/operators)
-    int size = ignore_label_.size();
-    int *tmp_size = &size;
-    int *ignore_label_size;
-    int *ignore_label;
-    cudaMalloc((void **)&ignore_label_size, sizeof(int));
-    cudaMalloc((void **)&ignore_label, size*sizeof(int));
-    int *tmp;
-    tmp = (int *) malloc(size*sizeof(int));
-    for(int ix = 0; ix< size; ix++)
-	  tmp[ix] = ignore_label_[ix];
-    cudaMemcpy(ignore_label, tmp, size*sizeof(int), cudaMemcpyHostToDevice);
-    cudaMemcpy(ignore_label_size, tmp_size, sizeof(int), cudaMemcpyHostToDevice);
     SoftmaxLossBackwardGPU<Dtype><<<CAFFE_GET_BLOCKS(nthreads),
         CAFFE_CUDA_NUM_THREADS>>>(nthreads, top_data, label, bottom_diff,
         outer_num_, dim, inner_num_, has_ignore_label_, ignore_label, counts, ignore_label_size);
-	free(tmp);
-	cudaFree(ignore_label_size);cudaFree(ignore_label);
+
     Dtype valid_count = -1;
     // Only launch another CUDA kernel if we actually need the count of valid
     // outputs.

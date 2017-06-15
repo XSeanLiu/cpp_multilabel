@@ -127,4 +127,5 @@ class SoftmaxWithLossLayer : public LossLayer<Dtype> {
 
 }  // namespace caffe
 
+
 #endif  // CAFFE_SOFTMAX_WITH_LOSS_LAYER_HPP_
