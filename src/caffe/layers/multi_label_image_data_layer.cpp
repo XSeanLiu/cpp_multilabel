@@ -47,7 +47,7 @@ void MultiLabelImageDataLayer<Dtype>::DataLayerSetUp(const vector<Blob<Dtype>*>&
     vector<string> ret;
     vector<int> labels;
     cutils->split(line, delim, ret);
-    for(size_t i = 1; i<ret.size()-1; i++)
+    for(size_t i = 1; i<ret.size(); i++)
         labels.push_back(atoi(ret[i].c_str()));
     lines_.push_back(std::make_pair(ret[0], labels));
   }
